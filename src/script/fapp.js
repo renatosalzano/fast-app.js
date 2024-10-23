@@ -2,8 +2,8 @@
 var FNODES = {};
 
 const REG = {
-  test: /{{(.*?)}}/gm,
   var: /(?<={{).*?(?=}})/gm,
+  var_replace: /{{(.*?)}}/gm,
   tag: /<(.*)>/g,
   state_replace: /state(.*?)\(/gm,
   state: /(?:(?:var|let|const)?(.*?)(?=<]|=).*?)?(state).*?\((.*?)\);?/gm,
@@ -57,21 +57,23 @@ function create_fragment(content) {
   return script;
 }
 
-function parse_template(node, ret = {}) {
+function parse_template(target_node, ret = {}) {
 
   // {props: [keys], state: [keys]}
 
   // attributes
-  for (const attr of node.attributes) {
+  for (const attr of target_node.attributes) {
     let [attr_name, attr_value] = [
       (attr.name.match(REG.var)?.[0] || "").trim(),
       (attr.value.match(REG.var)?.[0] || "").trim()
     ];
     const react_key = attr_name || attr_value;
     if (react_key) {
+      const i = { target_node, template_node: target_node.cloneNode() }
+
       !ret[react_key]
-        ? (ret[react_key] = [{ node }])
-        : (ret[react_key].push({ node }))
+        ? (ret[react_key] = [i])
+        : (ret[react_key].push(i))
 
       attr_name = attr_name ? `${attr_name}` : attr.name;
       attr_value = attr_value ? `${attr_value}` : attr.value;
@@ -84,24 +86,32 @@ function parse_template(node, ret = {}) {
 
   // text content
   let index = 0;
-  for (const child_node of node.childNodes) {
+  for (const child_node of target_node.childNodes) {
     index += 1;
     if (child_node.nodeType === 3) {
       // is text node
       for (let react_key of (child_node.data.match(REG.var) || [])) {
         react_key = react_key.trim();
         if (react_key) {
-          !ret[react_key] ? (ret[react_key] = [{ node }]) : (ret[react_key].push([{ node }]));
+          const i = { target_node, template_node: target_node.cloneNode() }
+
+          !ret[react_key]
+            ? (ret[react_key] = [i])
+            : (ret[react_key].push([i]));
+
           const last_node = ret[react_key].at(-1);
+
+          const n = { target_node: child_node, template_node: child_node.cloneNode() }
+
           !last_node.text_node
-            ? (last_node.text_node = [child_node])
-            : (last_node.text_node.push(child_node));
+            ? (last_node.text_node = [n])
+            : (last_node.text_node.push(n));
         }
       }
     }
   }
 
-  for (const child of node.children) {
+  for (const child of target_node.children) {
     ret = parse_template(child, ret)
   }
 
@@ -109,31 +119,27 @@ function parse_template(node, ret = {}) {
 }
 
 function tick(fnode, type, swag_key, caller) {
-  if (!fnode.is_mounted) {
-    // first run
-    console.warn('[fapp] tick before mount');
-  } else {
-    console.warn('[fapp] tick');
-  }
-  // const react_key = react_keys.filter((key) => key.includes(k))
 
-  console.log(type, swag_key, caller)
+  console.warn(`[fapp] (${fnode.ID}) tick [${caller}]`);
+
   const k = type === 'state' ? '$' + swag_key : swag_key;
 
   if (fnode.swag[k]) {
-    fnode.swag[k].forEach(({ node, ...mutations }) => {
+    fnode.swag[k].forEach(({ target_node, ...mutations }) => {
       Object.entries(mutations).forEach(([t, o]) => {
         switch (t) {
           case "attr":
             o.forEach(([name, value]) => {
+              // TODO DYNAMIC NAME ATTR
               // name = fnode[type][name] || name;
               value = fnode[type][value] || value;
-              node.setAttribute(name, value);
+              target_node.setAttribute(name, value);
             })
             break;
           case "text_node":
-            o.forEach((text_node) => {
-              text_node.textContent = fnode[type][k]
+            o.forEach(({ target_node, template_node }) => {
+              target_node.textContent = template_node.textContent
+                .replace(REG.var_replace, fnode[type][swag_key])
             })
             break;
         }
@@ -226,8 +232,8 @@ async function root_component(root_ele) {
 
     // first tick
 
-    Object.keys(fnode.props).forEach((k) => fnode.tick("props", k))
-    Object.keys(fnode.swag).forEach(k => fnode.tick("state", k.replace("$", ""), "manual"))
+    Object.keys(fnode.props).forEach((k) => fnode.tick("props", k, "root_component"))
+    Object.keys(fnode.swag).forEach(k => fnode.tick("state", k.replace("$", ""), "root_component"))
 
 
     if (fnode.is_async) {
