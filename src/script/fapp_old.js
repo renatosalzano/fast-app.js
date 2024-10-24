@@ -1,3 +1,4 @@
+
 'use strict';
 var FNODES = {};
 
@@ -7,6 +8,116 @@ const REG = {
   tag: /<(.*)>/g,
   state_replace: /state(.*?)\(/gm,
   state: /(?:(?:var|let|const)?(.*?)(?=<]|=).*?)?(state).*?\((.*?)\);?/gm,
+}
+
+const no_func = function usless() { };
+
+function get_component_object(fnode, node) {
+
+  const component = {
+    props: {}, // TODO better props declaration
+    swag: {},
+    future_shit: '',
+    template_node: null
+  }
+
+  node.removeAttribute('f-node');
+
+  for (const default_props of node.attributes) {
+    switch (true) {
+      case default_props.name.startsWith('on'):
+        // event
+        break;
+      default:
+        // props!
+        component.props[default_props.name] = default_props.value;
+        break;
+    }
+  };
+
+  // TODO PROPS DECLARATION
+
+  for (const child of fnode.children) {
+    if (child.tagName === 'SCRIPT') {
+      component.future_shit = child.innerText;
+    } else {
+      component.template_node = child;
+    }
+  };
+
+  component.swag = parse_template(component.template_node);
+
+  return component;
+
+}
+
+const Fapp = {
+  dev_mode: true,
+  Node: async (node) => {
+    const path = node.getAttribute('f-node');
+    const html = await (await fetch(`${path}.html`)).text();
+    // template found
+
+    const name = node.tagName.toLowerCase();
+
+    const temp_node = document.createElement('temp');
+    temp_node.innerHTML = html;
+
+    const component_node = temp_node.querySelector(`component[f-node=${name}]`)
+    if (!component_node) throw "component not found";
+
+    // component found
+    const {
+      swag,
+      props,
+      future_shit,
+      template_node
+    } = get_component_object(component_node, node)
+    // register component
+    const fnode = document.createElement('f-node');
+
+    fnode.ID = name + new Date().getTime();
+    fnode.name = name;
+    fnode.props = props;
+    fnode.swag = swag;
+    fnode.appendChild(template_node);
+
+    temp_node.remove();
+
+    let loaded, script_loading = new Promise((res) => loaded = res);
+    Fapp["script_loaded"] = loaded;
+
+    let ur_future_shit =
+      future_shit.replace('export default', `Fapp.Component['${fnode.ID}'] = `)
+      + `(function() {Fapp.script_loaded(); delete Fapp.script_loaded; })();`;
+
+    ur_future_shit = create_fragment(ur_future_shit);
+    node.appendChild(ur_future_shit);
+
+    console.warn(`[fapp] (${fnode.ID}) loading swag...`);
+    await script_loading;
+
+    return fnode;
+
+  },
+  Component: new Proxy({
+    // [ID]: component function
+  }, {
+    get(t, k) {
+      return Reflect.get(t, k);
+    },
+    set(t, k, v) {
+      console.warn(`[fapp] (${k}) is swag component`);
+      Reflect.set(t, k, v)
+      return true;
+    }
+  })
+}
+
+function log(node_id, text) {
+  if (Fapp.dev_mode) {
+    console.warn(`[fapp] (${node_id}) ${text}`)
+  }
 }
 
 
@@ -26,7 +137,7 @@ class FNode extends HTMLElement {
   }
 
   connectedCallback() {
-    console.warn("[fapp] fnode is mounted.");
+    log(this.ID, "is mounted.");
     this.is_mounted = true;
     if (this.is_mounted && this.mounted) {
       this.mounted();
@@ -58,8 +169,6 @@ function create_fragment(content) {
 }
 
 function parse_template(target_node, ret = {}) {
-
-  // {props: [keys], state: [keys]}
 
   // attributes
   for (const attr of target_node.attributes) {
@@ -125,103 +234,75 @@ function tick(fnode, type, swag_key, caller) {
   const k = type === 'state' ? '$' + swag_key : swag_key;
 
   if (fnode.swag[k]) {
-    fnode.swag[k].forEach(({ target_node, ...mutations }) => {
-      Object.entries(mutations).forEach(([t, o]) => {
-        switch (t) {
-          case "attr":
-            o.forEach(([name, value]) => {
-              // TODO DYNAMIC NAME ATTR
-              // name = fnode[type][name] || name;
-              value = fnode[type][value] || value;
-              target_node.setAttribute(name, value);
-            })
-            break;
-          case "text_node":
-            o.forEach(({ target_node, template_node }) => {
-              target_node.textContent = template_node.textContent
-                .replace(REG.var_replace, fnode[type][swag_key])
-            })
-            break;
-        }
+    fnode.swag[k]
+      .forEach(({ target_node, ...mutations }) => {
+        Object.entries(mutations)
+          .forEach(([t, o]) => {
+            switch (t) {
+              case "attr":
+                o.forEach(([name, value]) => {
+                  // TODO DYNAMIC NAME ATTR
+                  // name = fnode[type][name] || name;
+                  value = fnode[type][value] || value;
+                  target_node.setAttribute(name, value);
+                })
+                break;
+              case "text_node":
+                o.forEach(({ target_node, template_node }) => {
+                  target_node.textContent = template_node.textContent
+                    .replace(REG.var_replace, fnode[type][swag_key])
+                })
+                break;
+            }
+          })
       })
-    })
   }
 }
 
 async function root_component(root_ele) {
 
   try {
+    const fnode = await Fapp.Node(root_ele);
 
-    const path = root_ele.getAttribute('f-node');
-    const html = await (await fetch(`${path}.html`)).text();
-    // template found
-
-    // TODO
-    let cmp_name = path.split('/').at(-1);
-    const tmp = document.createElement('temp');
-
-    tmp.innerHTML = html;
-    const f_node = tmp.querySelector(`component[name=${cmp_name}]`);
-    if (!f_node) throw "component not found";
-
-    // component found
-
-    // register component
-    const fnode = document.createElement('f-node');
-    fnode.name = cmp_name;
-    fnode.ID = cmp_name + new Date().getTime(); // TODO is ugly
-
-
-    FNODES[fnode.ID] = fnode;
-
-    let template = '', template_node = null, code = '', props = {};
-
-    for (const child of f_node.children) {
-      // get future shit
-      if (child.tagName === 'SCRIPT') {
-        code = child.innerText;
-      } else {
-        template = child.outerHTML;
-        template_node = child;
+    const swag = new Proxy(
+      {
+        ref() { },
+        $(key, value) {
+          key = !key.includes("$") ? `$${k}` : k;
+          swag[key] = value;
+          return [swag[key], no_func]
+        }
+      },
+      {
+        get(t, k) {
+          return Reflect.get(t, k)
+        },
+        set(t, k, v) {
+          switch (k) {
+            case "props":
+            case "beforeMount":
+            case "mounted":
+            case "unmounted":
+              console.warn(`[fapp] (${fnode.ID}) ${k} is reserved keyword`)
+              return true;
+          }
+          if (typeof v === "function") {
+            // computed property
+            console.log('computed property');
+            return true;
+          }
+          if (k.includes('$'))
+            return Reflect.set(t, k, v);
+        }
       }
-    }
+    );
 
-    [...root_ele.attributes].forEach((attr) => {
-      switch (true) {
-        case attr.name.startsWith('f-'):
-          root_ele.removeAttribute(attr.name);
-          break;
-        case attr.name.startsWith('on'):
-          // event
-          break;
-        default:
-          // props!
-          fnode.props[attr.name] = attr.value;
-          break;
-      }
-    });
+    Fapp.Component[fnode.ID](fnode.props, pnode);
 
-    fnode.appendChild(template_node);
-    fnode.swag = parse_template(template_node);
+    return
 
-    // const react_template = parse_template(template_node);
-
-    // PROPS
-
-    let loaded, script_loading = new Promise((res) => loaded = res);
-    FNODES["script_loaded"] = () => loaded();
-
-    code = code.replace('export default', `FNODES['${fnode.ID}'].h = `);
-    code += `(function() {FNODES.script_loaded(); delete FNODES.script_loaded; })();`
-    code = create_fragment(code);
-    root_ele.appendChild(code);
-
-    console.warn('[fapp]: loading modules');
-    await script_loading;
-
+    // TODO put inside FNODE CLASS?
     fnode.tick = (t, k, c) => tick(fnode, t, k, c);
-
-
 
     // LOAD MODULES
     FNODES[fnode.ID].h({
@@ -242,6 +323,11 @@ async function root_component(root_ele) {
       delete fnode.mounted;
     }
 
+    on_attr_change(root_ele, (name, value) => {
+      fnode.props[name] = value;
+      fnode.tick("props", name, 'on_attr_change');
+    })
+
     // clean script module
     root_ele.innerHTML = "";
     root_ele.appendChild(fnode);
@@ -260,6 +346,9 @@ async function render(root_node = document.body) {
   }
 }
 
+
+
+
 async function dev() {
   await render();
   // on_attr_change(test, (m) => {
@@ -268,21 +357,12 @@ async function dev() {
   setTimeout(() => {
     const test = document.body.querySelector('test');
     // test.remove();
-    test.setAttribute('foo', 'bar')
+    test?.setAttribute('word', 'awesome')
     // test.remove()
   }, 2000)
 }
 
 window.addEventListener('DOMContentLoaded', dev)
-
-function Fapp() {
-
-  return {
-    ref(name) {
-
-    }
-  }
-}
 
 // UTILS
 
@@ -301,6 +381,8 @@ function on_attr_change(target, cb) {
     stop() { MO.disconnect() }
   }
 }
+
+export default Fapp;
 
 // export default Fapp
 

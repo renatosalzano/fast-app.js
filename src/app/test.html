@@ -1,4 +1,4 @@
-<component name="test">
+<component f-node="test" word="string" class="suca">
   <script>
     // console.log("created test");
     import stuff from "/module";
@@ -21,7 +21,7 @@
         await delay();
         setTimeout(() => {
           set({ str: "other string" });
-        }, 1000);
+        }, 2000);
       });
 
       unmounted(async () => {

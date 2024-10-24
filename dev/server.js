@@ -15,8 +15,11 @@ async function dev_server() {
   // Create Vite server in middleware mode
   const vite = await createServer({
     server: {
+      hmr: false,
       middlewareMode: true,
-      proxy: {},
+      proxy: {
+
+      },
       watch: {
         // Add custom paths to watch for full page refreshes
         additionalPaths: (watcher) => {
@@ -48,9 +51,13 @@ async function dev_server() {
     }
   });
 
-  app.use('/src/script', express.static(resolve(__dirname, '../src/script')))
-  app.use('/app', express.static(resolve(__dirname, '../src/app')))
-  app.use('/module', express.static(resolve(__dirname, '../src/module.js')))
+  app.use('/lib', express.static(resolve(__dirname, '../lib')));
+  app.use('/app', express.static(resolve(__dirname, '../src/app')));
+
+  app.use((req, res, next) => {
+    console.log(`${req.method} ${req.path}`);
+    next()
+  });
 
   app.use(vite.middlewares);
 

@@ -1,0 +1,28 @@
+<component f-node="structure">
+  <script>
+    import { Component } from "/lib/fapp.js";
+
+    Component((vm) => {
+      const [state, set] = vm.state("state", "test");
+
+      const [obj, dispatch] = vm.state("obj", { test: "stringa", test1: "stringa uno" });
+
+      vm.before(async () => {
+        console.log("async before");
+        set("test update");
+      });
+
+      vm.mounted(() => {
+        // setObject({ test: "full" });
+        console.log(obj);
+        dispatch((prev) => ({ ...prev, test1: "stringa due" }));
+      }); // mounted
+
+      return () => {
+        // unmounted code
+      };
+    });
+  </script>
+
+  <div>{{ $obj.test }} {{ $obj.test1 }}</div>
+</component>
